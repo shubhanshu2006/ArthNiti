@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String               @id @default(cuid())
+  name               String?
+  email              String?              @unique
+  phone              String?
+  persona            String?
+  riskProfile        String?
+  smartSaveEnabled   Boolean              @default(true)
+  maxDailyAutoSave   Decimal?             @db.Decimal(12, 2)
+  minimumBalance     Decimal              @default(0) @db.Decimal(12, 2)
+  savingPercentage   Decimal              @default(0.15) @db.Decimal(5, 4)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  aaConsents         AAConsent[]
+  accounts           FinancialAccount[]
+  transactions       Transaction[]
+  incomeStats        IncomeStats[]
+  wallet             Wallet?
+  goals              Goal[]
+  recommendations    Recommendation[]
+  recommendationInputs RecommendationInput[]
+  taxEstimates       TaxEstimate[]
+}
+
+model AAConsent {
+  id                 String             @id @default(cuid())
+  userId             String
+  provider           String
+  consentId          String             @unique
+  status             String
+  purpose            String?
+  expiresAt          DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts           FinancialAccount[]
+
+  @@index([userId, status])
+}
+
+model FinancialAccount {
+  id                  String        @id @default(cuid())
+  userId              String
+  aaConsentId         String?
+  institutionName     String
+  accountType         String
+  maskedAccountNumber String?
+  currency            String         @default("INR")
+  status              String         @default("ACTIVE")
+  lastSyncedAt        DateTime?
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aaConsent           AAConsent?     @relation(fields: [aaConsentId], references: [id], onDelete: SetNull)
+  transactions        Transaction[]
+}
+
+model Transaction {
+  id                      String            @id @default(cuid())
+  userId                  String
+  accountId               String?
+  externalId              String?
+  amount                  Decimal           @db.Decimal(12, 2)
+  date                    DateTime          @default(now())
+  type                    String
+  description             String?
+  merchant                String?
+  sourcePlatform          String?
+  category                String?
+  sourceType              String
+  incomeMode              String?
+  isIncome                Boolean           @default(false)
+  classificationConfidence Decimal?         @db.Decimal(5, 4)
+  classificationReason    String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  user                    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account                 FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, externalId])
+  @@index([userId, date])
+  @@index([userId, isIncome, date])
+}
+
+model IncomeStats {
+  id                String   @id @default(cuid())
+  userId            String
+  periodStart       DateTime
+  periodEnd         DateTime
+  rollingAverage    Decimal  @db.Decimal(12, 2)
+  medianIncome      Decimal  @db.Decimal(12, 2)
+  variance          Decimal  @db.Decimal(14, 4)
+  standardDeviation Decimal  @db.Decimal(12, 4)
+  volatilityClass   String
+  goodDayThreshold  Decimal  @db.Decimal(12, 2)
+  lowDayThreshold   Decimal  @db.Decimal(12, 2)
+  drySpellFrequency Decimal  @db.Decimal(8, 4)
+  earningFrequency  Decimal  @db.Decimal(8, 4)
+  createdAt         DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, periodStart, periodEnd])
+}
+
+model Wallet {
+  id              String             @id @default(cuid())
+  userId          String             @unique
+  balance         Decimal            @default(0) @db.Decimal(12, 2)
+  interestEarned  Decimal            @default(0) @db.Decimal(12, 2)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goals           Goal[]
+  ledger          WalletTransaction[]
+  savings         SavingsLedger[]
+  interestAccount InterestAccount?
+  interestEntries InterestEntry[]
+}
+
+model Goal {
+  id                   String   @id @default(cuid())
+  userId               String
+  walletId             String
+  type                 String
+  name                 String
+  targetAmount         Decimal  @db.Decimal(12, 2)
+  allocatedBalance     Decimal  @default(0) @db.Decimal(12, 2)
+  allocationPercentage Decimal  @default(0) @db.Decimal(5, 2)
+  priority             Int      @default(0)
+  status               String    @default("ACTIVE")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet               Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model WalletTransaction {
+  id        String   @id @default(cuid())
+  walletId  String
+  type      String
+  amount    Decimal  @db.Decimal(12, 2)
+  reason    String?
+  status    String   @default("COMPLETED")
+  createdAt DateTime @default(now())
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+}
+
+model SavingsLedger {
+  id        String   @id @default(cuid())
+  userId    String
+  walletId  String
+  amount    Decimal  @db.Decimal(12, 2)
+  type      String
+  reason    String?
+  createdAt DateTime @default(now())
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model InterestAccount {
+  id                String   @id @default(cuid())
+  walletId          String   @unique
+  partnerName       String
+  productName       String
+  annualRate        Decimal  @db.Decimal(8, 6)
+  rateType          String
+  eligibleBalance   Decimal  @db.Decimal(12, 2)
+  lastCalculatedAt  DateTime?
+  lastCreditedAt    DateTime?
+  wallet            Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model InterestEntry {
+  id              String   @id @default(cuid())
+  walletId        String
+  amount          Decimal  @db.Decimal(12, 2)
+  eligibleBalance Decimal  @db.Decimal(12, 2)
+  rate            Decimal  @db.Decimal(8, 6)
+  periodStart     DateTime
+  periodEnd       DateTime
+  status          String
+  source          String
+  createdAt       DateTime @default(now())
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, periodStart])
+}
+
+model Recommendation {
+  id         String   @id @default(cuid())
+  userId     String
+  category   String
+  reasoning  String?
+  confidence Decimal? @db.Decimal(5, 4)
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RecommendationInput {
+  id                String   @id @default(cuid())
+  userId            String
+  averageIncome     Decimal  @db.Decimal(12, 2)
+  incomeVariance    Decimal  @db.Decimal(14, 4)
+  volatilityClass   String
+  drySpellFrequency Decimal  @db.Decimal(8, 4)
+  savingsRate       Decimal  @db.Decimal(8, 4)
+  availableSavings  Decimal  @db.Decimal(12, 2)
+  riskProfile       String
+  createdAt         DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TaxRuleSet {
+  id            String   @id @default(cuid())
+  name          String
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  assumptions   Json
+  createdAt     DateTime @default(now())
+  estimates     TaxEstimate[]
+}
+
+model TaxEstimate {
+  id                 String    @id @default(cuid())
+  userId             String
+  quarter            String
+  cumulativeIncome   Decimal   @db.Decimal(12, 2)
+  estimatedLiability Decimal   @db.Decimal(12, 2)
+  suggestedSetAside  Decimal   @db.Decimal(12, 2)
+  ruleSetId          String
+  createdAt          DateTime  @default(now())
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ruleSet          TaxRuleSet  @relation(fields: [ruleSetId], references: [id])
+
+  @@index([userId, quarter])
+}
+
+
