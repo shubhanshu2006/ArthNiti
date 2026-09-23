@@ -2,7 +2,7 @@
   "name": "fintech-backend",
   "version": "0.1.0",
   "private": true,
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",
@@ -14,15 +14,19 @@
   },
   "dependencies": {
     "@langchain/langgraph": "latest",
-    "@prisma/adapter-pg": "latest",
+    "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "cors": "^2.8.6",
     "dotenv": "latest",
     "express": "latest",
-    "pg": "latest",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.23.0",
     "zod": "latest"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "latest",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "latest",
     "prisma": "^7.10.0",
     "tsx": "latest",
