@@ -20,7 +20,10 @@ const generateSchema = z.object({
 
 /**
  * GET /api/recommendation/:userId
- * Gets the latest investment recommendation for a user.
+ * Gets the latest persisted investment recommendation for a user.
+ * Does NOT recompute/persist a new one on every call — use
+ * POST /api/recommendation/generate for that. Bootstraps a first
+ * recommendation only if the user has none yet.
  */
 router.get(
   "/:userId",
@@ -29,8 +32,8 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userId = routeParam(req.params.userId);
-      const generated = await generateRecommendation(userId);
-      res.json({ success: true, data: generated });
+      const latest = await getLatestRecommendation(userId);
+      res.json({ success: true, data: latest });
     } catch (err) {
       next(err);
     }
