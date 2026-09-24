@@ -27,8 +27,8 @@ export function recommend(input: {
   if (risk === "conservative" || input.volatilityClass === "high") {
     return { category: "Conservative", confidence: 0.86, reasonCodes: [...reasons, `${risk.toUpperCase()}_RISK_PROFILE`] };
   }
-  if (risk === "aggressive" && input.volatilityClass === "low") {
-    return { category: "Growth", confidence: 0.78, reasonCodes: [...reasons, "AGGRESSIVE_RISK_PROFILE"] };
+  if (risk === "aggressive" && input.volatilityClass !== "high") {
+    return { category: "Growth", confidence: 0.82, reasonCodes: [...reasons, "AGGRESSIVE_RISK_PROFILE"] };
   }
   return { category: "Balanced", confidence: 0.8, reasonCodes: [...reasons, "MODERATE_RISK_PROFILE"] };
 }

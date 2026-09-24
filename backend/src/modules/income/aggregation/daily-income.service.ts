@@ -54,11 +54,18 @@ export async function getDailyIncome(userId: string, from: Date, to: Date) {
  */
 export async function getTodayIncome(userId: string) {
   const today = new Date();
+  const localStart = startOfDay(today);
+  const localEnd = endOfDay(today);
+  const utcStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0));
+  const utcEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
+  const minStart = new Date(Math.min(localStart.getTime(), utcStart.getTime()));
+  const maxEnd = new Date(Math.max(localEnd.getTime(), utcEnd.getTime()));
+
   const transactions = await prisma.transaction.findMany({
     where: {
       userId,
       isIncome: true,
-      date: { gte: startOfDay(today), lte: endOfDay(today) },
+      date: { gte: minStart, lte: maxEnd },
     },
   });
 

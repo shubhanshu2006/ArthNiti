@@ -20,7 +20,7 @@ const DISCLAIMER = "Illustrative information, not personalized financial advice.
 export async function generateRecommendation(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { wallet: true },
+    include: { wallet: { include: { goals: true } } },
   });
   if (!user) throw ApiError.notFound("User not found");
 
@@ -29,6 +29,8 @@ export async function generateRecommendation(userId: string) {
   const summary = await getIncomeSummary(userId, from30);
 
   const availableSavings = user.wallet ? numberValue(user.wallet.balance) : 0;
+  const growthGoal = user.wallet?.goals.find((g) => g.type === "GROWTH");
+  const growthBalance = growthGoal ? numberValue(growthGoal.allocatedBalance) : 0;
 
   // Build recommendation inputs
   const inputs = {
@@ -40,6 +42,7 @@ export async function generateRecommendation(userId: string) {
       : 0,
     savingsRate: numberValue(user.savingPercentage),
     availableSavings,
+    growthBalance,
     riskProfile: user.riskProfile ?? "moderate",
   };
 
@@ -98,23 +101,37 @@ export async function generateRecommendation(userId: string) {
 }
 
 /**
- * Gets the latest recommendation for a user.
+ * Gets the latest persisted recommendation for a user without recomputing.
+ * If none exists yet (first-time view), generates and persists one.
+ * Used by GET routes so viewing a recommendation doesn't create new rows
+ * on every request — only `generateRecommendation` (POST /generate) does that.
  */
 export async function getLatestRecommendation(userId: string) {
-  const recommendation = await prisma.recommendation.findFirst({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-  });
+  const [recommendation, inputRecord] = await Promise.all([
+    prisma.recommendation.findFirst({ where: { userId }, orderBy: { createdAt: "desc" } }),
+    prisma.recommendationInput.findFirst({ where: { userId }, orderBy: { createdAt: "desc" } }),
+  ]);
 
   if (!recommendation) {
-    return null;
+    return generateRecommendation(userId);
   }
 
   return {
     id: recommendation.id,
     category: recommendation.category,
-    reasoning: recommendation.reasoning,
     confidence: numberValue(recommendation.confidence),
+    explanation: recommendation.reasoning,
+    inputs: inputRecord
+      ? {
+          averageIncome: numberValue(inputRecord.averageIncome),
+          incomeVariance: numberValue(inputRecord.incomeVariance),
+          volatilityClass: inputRecord.volatilityClass,
+          drySpellFrequency: numberValue(inputRecord.drySpellFrequency),
+          savingsRate: numberValue(inputRecord.savingsRate),
+          availableSavings: numberValue(inputRecord.availableSavings),
+          riskProfile: inputRecord.riskProfile,
+        }
+      : null,
     disclaimer: DISCLAIMER,
     createdAt: recommendation.createdAt,
   };
@@ -141,7 +158,7 @@ export async function getRecommendationHistory(userId: string, limit = 10) {
 
 function buildExplanation(
   result: { category: string; reasonCodes: string[]; confidence: number },
-  inputs: { averageIncome: number; volatilityClass: string; riskProfile: string; availableSavings: number }
+  inputs: { averageIncome: number; volatilityClass: string; riskProfile: string; availableSavings: number; growthBalance?: number }
 ): string {
   const parts: string[] = [];
 
@@ -151,8 +168,15 @@ function buildExplanation(
     parts.push(`Your income volatility is high (${inputs.volatilityClass}), suggesting more stable investment options.`);
   }
 
+  const growthAmt = roundMoney(inputs.growthBalance ?? 0);
   if (result.reasonCodes.includes("LIMITED_AVAILABLE_SAVINGS")) {
-    parts.push(`With available savings of ₹${roundMoney(inputs.availableSavings)}, building an emergency fund should be prioritized.`);
+    parts.push(
+      `With an overall savings buffer of ₹${roundMoney(inputs.availableSavings)}, building your emergency reserve remains the priority. Only your designated Growth Fund (₹${growthAmt}) is allocated toward market investments, keeping your emergency and medical reserves 100% protected in liquid cash.`
+    );
+  } else {
+    parts.push(
+      `Your designated Growth Fund of ₹${growthAmt} (from total savings of ₹${roundMoney(inputs.availableSavings)}) is ready for allocation toward this strategy.`
+    );
   }
 
   if (inputs.riskProfile === "conservative") {

@@ -1,29 +1,44 @@
 import { prisma } from "../../db/client.js";
 import { classifyIncome } from "./classification/income-classifier.js";
 import { numberValue, roundMoney } from "../../utils/money.js";
+import { endOfDay } from "../../utils/dates.js";
 
-export async function getIncomeSummary(userId: string, from?: Date, to = new Date()) {
+export async function getIncomeSummary(userId: string, from?: Date, to?: Date) {
+  const targetTo = to ?? new Date();
+  const maxEnd = endOfDay(targetTo);
   const transactions = await prisma.transaction.findMany({
-    where: { userId, isIncome: true, date: { gte: from, lte: to } },
+    where: { userId, isIncome: true, date: { gte: from, lte: maxEnd } },
     orderBy: { date: "asc" },
   });
   const online = transactions.filter((item) => item.incomeMode === "ONLINE").reduce((sum, item) => sum + numberValue(item.amount), 0);
   const offline = transactions.filter((item) => item.incomeMode === "OFFLINE").reduce((sum, item) => sum + numberValue(item.amount), 0);
-  const byDay = new Map<string, number>();
+  const txByDay = new Map<string, number>();
   for (const item of transactions) {
     const day = item.date.toISOString().slice(0, 10);
-    byDay.set(day, (byDay.get(day) ?? 0) + numberValue(item.amount));
+    txByDay.set(day, (txByDay.get(day) ?? 0) + numberValue(item.amount));
   }
 
+  const byDay = new Map<string, number>();
   if (from) {
     const cursor = new Date(from);
     cursor.setHours(0, 0, 0, 0);
-    const end = new Date(to);
+    const end = new Date(targetTo);
     end.setHours(0, 0, 0, 0);
     while (cursor <= end) {
       const day = cursor.toISOString().slice(0, 10);
-      if (!byDay.has(day)) byDay.set(day, 0);
+      byDay.set(day, txByDay.get(day) ?? 0);
       cursor.setDate(cursor.getDate() + 1);
+    }
+    // Include any transaction day that may have been recorded today in local TZ
+    for (const [day, amt] of txByDay.entries()) {
+      if (!byDay.has(day)) {
+        byDay.set(day, amt);
+      }
+    }
+  } else {
+    const sortedKeys = [...txByDay.keys()].sort();
+    for (const k of sortedKeys) {
+      byDay.set(k, txByDay.get(k)!);
     }
   }
 
@@ -54,7 +69,7 @@ export async function getIncomeSummary(userId: string, from?: Date, to = new Dat
 }
 
 export async function createManualIncome(input: { userId: string; amount: number; date: Date; description?: string; category?: string }) {
-  return prisma.transaction.create({
+  const tx = await prisma.transaction.create({
     data: {
       userId: input.userId,
       amount: input.amount,
@@ -69,6 +84,28 @@ export async function createManualIncome(input: { userId: string; amount: number
       classificationReason: "Explicitly entered by user as offline income",
     },
   });
+
+  // Autonomous Smart Save: If enabled, automatically allocate surplus into virtual goals
+  try {
+    const user = await prisma.user.findUnique({ where: { id: input.userId } });
+    if (user?.smartSaveEnabled) {
+      const { computeSavingsDecision } = await import("../savings/savings.service.js");
+      const { processAutoSave } = await import("../wallet/deposit.service.js");
+      const decision = await computeSavingsDecision(input.userId);
+      if (decision.finalAmount > 0) {
+        await processAutoSave(
+          input.userId,
+          decision.finalAmount,
+          decision.explanation || "Autonomous Smart Save from surplus"
+        );
+      }
+    }
+  } catch (err) {
+    // Non-blocking: log and continue
+    console.error("Auto-save on income log error:", err);
+  }
+
+  return tx;
 }
 
 export async function classifyTransaction(id: string) {

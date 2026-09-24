@@ -15,6 +15,8 @@ export interface FullSavingsDecision {
   smartSave: SavingsDecision;
   safety: SafetyCheck;
   finalAmount: number;
+  alreadySavedToday: number;
+  isAutoSaved: boolean;
   finalDecision: "SAVE" | "PAUSE" | "REDUCE";
   explanation: string;
 }
@@ -76,18 +78,51 @@ export async function computeSavingsDecision(userId: string): Promise<FullSaving
   });
 
   // Determine final outcome
-  const finalAmount = safetyResult.safe ? safetyResult.adjustedAmount : 0;
+  const proposedFinal = safetyResult.safe ? safetyResult.adjustedAmount : 0;
   const finalDecision: "SAVE" | "PAUSE" | "REDUCE" =
-    finalAmount > 0
-      ? finalAmount < smartSaveResult.savedAmount
+    proposedFinal > 0
+      ? proposedFinal < smartSaveResult.savedAmount
         ? "REDUCE"
         : "SAVE"
       : "PAUSE";
 
-  // Build explanation
-  const explanation = buildExplanation(todayIncome, normalIncome, finalAmount, finalDecision, safetyResult);
+  // Check how much was already auto-saved today
+  const now = new Date();
+  const localStart = startOfDay(now);
+  const utcStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+  const todayStart = new Date(Math.min(localStart.getTime(), utcStart.getTime()));
 
-  logger.info(LOG_CTX, `Decision for ${userId}: ${finalDecision} ₹${finalAmount}`, {
+  const todaySavings = await prisma.savingsLedger.findMany({
+    where: {
+      userId,
+      type: "AUTO_SAVE",
+      createdAt: { gte: todayStart },
+    },
+  });
+  let alreadyAutoSavedToday = roundMoney(
+    todaySavings.reduce((sum, s) => sum + numberValue(s.amount), 0)
+  );
+
+  let explanation = buildExplanation(todayIncome, normalIncome, proposedFinal, finalDecision, safetyResult);
+
+  // If Smart Save is enabled and there is remaining surplus to save, autonomously execute the transfer!
+  const remainingToSave = Math.max(0, roundMoney(proposedFinal - alreadyAutoSavedToday));
+  if (user.smartSaveEnabled && remainingToSave > 0) {
+    const { processAutoSave } = await import("../wallet/deposit.service.js");
+    await processAutoSave(
+      userId,
+      remainingToSave,
+      explanation || `Autonomous Smart Save: ₹${smartSaveResult.surplus} surplus detected`
+    );
+    alreadyAutoSavedToday = roundMoney(alreadyAutoSavedToday + remainingToSave);
+  }
+
+  const isAutoSaved = alreadyAutoSavedToday > 0;
+  if (isAutoSaved) {
+    explanation = `Today's income of ₹${roundMoney(todayIncome)} is above your normal baseline of ₹${roundMoney(normalIncome)} (surplus: ₹${smartSaveResult.surplus}). ₹${alreadyAutoSavedToday} was automatically saved into your virtual goals.`;
+  }
+
+  logger.info(LOG_CTX, `Decision for ${userId}: ${finalDecision} alreadySaved=₹${alreadyAutoSavedToday} remaining=₹${remainingToSave}`, {
     todayIncome,
     normalIncome,
     surplus: smartSaveResult.surplus,
@@ -96,7 +131,9 @@ export async function computeSavingsDecision(userId: string): Promise<FullSaving
   return {
     smartSave: smartSaveResult,
     safety: safetyResult,
-    finalAmount,
+    finalAmount: remainingToSave,
+    alreadySavedToday: alreadyAutoSavedToday,
+    isAutoSaved,
     finalDecision,
     explanation,
   };

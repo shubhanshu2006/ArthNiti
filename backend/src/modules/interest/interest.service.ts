@@ -56,19 +56,23 @@ export async function calculateAndCreditInterest(userId: string) {
   const balance = numberValue(wallet.balance);
   if (balance <= 0) {
     return {
+      amount: 0,
       interestAmount: 0,
+      eligibleBalance: 0,
       message: "No eligible balance for interest calculation",
     };
   }
 
   const annualRate = await interestProvider.getApplicableRate(account.productName);
-  const lastCalculated = account.lastCalculatedAt ?? wallet.createdAt;
   const now = new Date();
-  const days = daysBetween(lastCalculated, now);
+  const lastCalculated = account.lastCalculatedAt;
+  const days = !lastCalculated ? 1 : daysBetween(lastCalculated, now);
 
   if (days < 1) {
     return {
+      amount: 0,
       interestAmount: 0,
+      eligibleBalance: balance,
       message: "Interest already calculated for today",
     };
   }
@@ -76,19 +80,20 @@ export async function calculateAndCreditInterest(userId: string) {
   const interestAmount = await interestProvider.calculateInterest(balance, annualRate, { days });
 
   if (interestAmount <= 0) {
-    return { interestAmount: 0, message: "Calculated interest is zero" };
+    return { amount: 0, interestAmount: 0, eligibleBalance: balance, message: "Calculated interest is zero" };
   }
 
   // Atomic transaction: create entry + update wallet + update account
   const result = await prisma.$transaction(async (tx) => {
     // 1. Create interest entry
+    const periodStart = lastCalculated ?? new Date(now.getTime() - days * 86400000);
     const entry = await tx.interestEntry.create({
       data: {
         walletId: wallet.id,
         amount: interestAmount,
         eligibleBalance: balance,
         rate: annualRate,
-        periodStart: lastCalculated,
+        periodStart,
         periodEnd: now,
         status: "CREDITED",
         source: account.productName,
@@ -136,11 +141,12 @@ export async function calculateAndCreditInterest(userId: string) {
     });
 
     return {
+      amount: roundMoney(interestAmount),
       interestAmount: roundMoney(interestAmount),
       eligibleBalance: roundMoney(balance),
       annualRate,
       days,
-      periodStart: lastCalculated,
+      periodStart,
       periodEnd: now,
       newWalletBalance: numberValue(updatedWallet.balance),
       totalInterestEarned: numberValue(updatedWallet.interestEarned),
