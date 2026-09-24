@@ -16,7 +16,9 @@ const userIdParamsSchema = z.object({
 
 /**
  * GET /api/wallet/:userId/interest
- * Gets the interest account details and triggers calculation.
+ * Gets the interest account details as currently persisted.
+ * Does NOT calculate/credit new interest on every call — use
+ * POST /api/wallet/:userId/interest/calculate for that.
  */
 router.get(
   "/:userId/interest",
@@ -25,8 +27,6 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userId = routeParam(req.params.userId);
-      await getInterestAccount(userId);
-      await calculateAndCreditInterest(userId);
       const account = await getInterestAccount(userId);
       res.json({ success: true, data: account });
     } catch (err) {
