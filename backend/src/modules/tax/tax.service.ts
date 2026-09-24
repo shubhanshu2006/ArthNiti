@@ -67,7 +67,10 @@ export async function calculateTaxEstimate(userId: string) {
 }
 
 /**
- * Gets the latest tax estimate for a user.
+ * Gets the latest persisted tax estimate for a user without recomputing.
+ * If none exists yet (first-time view), calculates and persists one.
+ * Used by GET routes so viewing a tax estimate doesn't create new rows
+ * on every request — only `calculateTaxEstimate` (POST /calculate) does that.
  */
 export async function getLatestTaxEstimate(userId: string) {
   const estimate = await prisma.taxEstimate.findFirst({
@@ -76,18 +79,27 @@ export async function getLatestTaxEstimate(userId: string) {
     include: { ruleSet: true },
   });
 
-  if (!estimate) return null;
+  if (!estimate) {
+    return calculateTaxEstimate(userId);
+  }
+
+  const cumulativeIncome = numberValue(estimate.cumulativeIncome);
+  const taxResult = {
+    estimatedLiability: numberValue(estimate.estimatedLiability),
+    suggestedSetAside: numberValue(estimate.suggestedSetAside),
+  };
 
   return {
     id: estimate.id,
     quarter: estimate.quarter,
-    cumulativeIncome: numberValue(estimate.cumulativeIncome),
-    estimatedLiability: numberValue(estimate.estimatedLiability),
-    suggestedSetAside: numberValue(estimate.suggestedSetAside),
+    cumulativeIncome,
+    estimatedLiability: taxResult.estimatedLiability,
+    suggestedSetAside: taxResult.suggestedSetAside,
     ruleSet: {
       name: estimate.ruleSet.name,
       assumptions: estimate.ruleSet.assumptions,
     },
+    explanation: buildTaxExplanation(cumulativeIncome, taxResult, estimate.quarter),
     disclaimer: DISCLAIMER,
     createdAt: estimate.createdAt,
   };
@@ -113,7 +125,7 @@ export async function getTaxHistory(userId: string, limit = 10) {
   }));
 }
 
-function buildTaxExplanation(
+export function buildTaxExplanation(
   cumulativeIncome: number,
   taxResult: { estimatedLiability: number; suggestedSetAside: number },
   quarter: string

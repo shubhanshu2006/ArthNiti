@@ -20,7 +20,10 @@ const calculateSchema = z.object({
 
 /**
  * GET /api/tax/:userId
- * Gets the latest tax estimate for a user.
+ * Gets the latest persisted tax estimate for a user.
+ * Does NOT recompute/persist a new one on every call — use
+ * POST /api/tax/calculate for that. Bootstraps a first estimate
+ * only if the user has none yet.
  */
 router.get(
   "/:userId",
@@ -29,8 +32,8 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userId = routeParam(req.params.userId);
-      const calculated = await calculateTaxEstimate(userId);
-      res.json({ success: true, data: calculated });
+      const latest = await getLatestTaxEstimate(userId);
+      res.json({ success: true, data: latest });
     } catch (err) {
       next(err);
     }
