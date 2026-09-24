@@ -1,13 +1,22 @@
 import { prisma } from "../../db/client.js";
 import { getIncomeSummary } from "../income/income.service.js";
-import { recommend } from "../recommendations/recommendation.engine.js";
-import { estimateTax } from "../tax/tax.engine.js";
-import { calculateTaxEstimate } from "../tax/tax.service.js";
-import { generateRecommendation } from "../recommendations/recommendation.service.js";
+import { getLatestTaxEstimate } from "../tax/tax.service.js";
+import { getLatestRecommendation } from "../recommendations/recommendation.service.js";
 import { numberValue, roundMoney } from "../../utils/money.js";
 import { startOfDay } from "../../utils/dates.js";
 
 export async function getDashboard(userId: string) {
+  // Autonomously evaluate and execute auto-save if enabled
+  try {
+    const userCheck = await prisma.user.findUnique({ where: { id: userId }, select: { smartSaveEnabled: true } });
+    if (userCheck?.smartSaveEnabled) {
+      const { computeSavingsDecision } = await import("../savings/savings.service.js");
+      await computeSavingsDecision(userId);
+    }
+  } catch (err) {
+    // Non-blocking
+  }
+
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const summary = await getIncomeSummary(userId, monthStart, now);
@@ -19,11 +28,14 @@ export async function getDashboard(userId: string) {
 
   const [savings, latestRecommendation, latestTax] = await Promise.all([
     prisma.savingsLedger.findMany({ where: { userId, createdAt: { gte: monthStart } } }),
-    generateRecommendation(userId),
-    calculateTaxEstimate(userId),
+    getLatestRecommendation(userId),
+    getLatestTaxEstimate(userId),
   ]);
 
-  const today = startOfDay(now);
+  const localStart = startOfDay(now);
+  const utcStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+  const today = new Date(Math.min(localStart.getTime(), utcStart.getTime()));
+
   const todayAutoSave = savings
     .filter((entry) => entry.type === "AUTO_SAVE" && entry.createdAt >= today)
     .reduce((sum, entry) => sum + numberValue(entry.amount), 0);
